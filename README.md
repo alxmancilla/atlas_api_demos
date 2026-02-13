@@ -45,7 +45,7 @@ python atlas_ip_access_analyzer.py
 
 1. Clone or download this repository:
 ```bash
-cd atlas_accesslist_validation
+cd atlas_api_demos
 ```
 
 2. Create and activate a virtual environment (recommended):
