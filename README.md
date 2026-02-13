@@ -1,6 +1,6 @@
-# MongoDB Atlas IP Access List Analyzer
+# MongoDB Atlas API demos
 
-A Python script to audit IP address whitelisting across all projects in a MongoDB Atlas organization. It retrieves all IP addresses/CIDR blocks allowed to access each project and highlights any projects configured with `0.0.0.0/0` (open to the internet).
+Collection of Python scripts demonstrating MongoDB Atlas API capabilities. Includes examples for auditing security configurations, managing IP access lists, and retrieving organization/project data through the Atlas Admin API v2.
 
 ## Quick Start
 
