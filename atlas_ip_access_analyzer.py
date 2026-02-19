@@ -23,6 +23,7 @@ from typing import Dict, List, Tuple
 from urllib.parse import urljoin
 import json
 from dotenv import load_dotenv
+import certifi
 
 # Atlas API base URL (must end with / for urljoin to work correctly)
 ATLAS_BASE_URL = "https://cloud.mongodb.com/api/atlas/v2/"
@@ -76,7 +77,7 @@ class AtlasAPIClient:
         }
 
         try:
-            response = self.session.request(method, url, headers=headers)
+            response = self.session.request(method, url, headers=headers, verify=certifi.where())
             response.raise_for_status()
 
             # Some endpoints return 204 No Content
