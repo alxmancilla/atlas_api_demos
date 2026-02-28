@@ -1,6 +1,24 @@
 # MongoDB Atlas API demos
 
-Collection of Python scripts demonstrating MongoDB Atlas API capabilities. Includes examples for auditing security configurations, managing IP access lists, and retrieving organization/project data through the Atlas Admin API v2.
+Collection of Python scripts demonstrating MongoDB Atlas API capabilities. Includes comprehensive security auditing, IP access list analysis, and organization/project data retrieval through the MongoDB Atlas Administration API v2.
+
+## Scripts Overview
+
+### 1. **atlas_security_auditor.py** — Project-Level Security Audit
+Comprehensive security audit for a single MongoDB Atlas project. Checks and enforces 7 critical security best practices:
+- **IP Access List** — Removes `0.0.0.0/0` wildcard entries
+- **Database Users** — Flags users with `atlasAdmin` role
+- **TLS Minimum Version** — Enforces TLS 1.2+
+- **Encryption at Rest** — Verifies customer-managed key encryption
+- **Auditing** — Enables audit logs with event filters
+- **Alerts** — Creates missing alert configurations
+- **Private Endpoints** — Validates private endpoint setup
+
+### 2. **atlas_organization_security_audit.py** — Organization-Level Security Audit
+Audits all projects in a MongoDB Atlas organization. Automatically discovers and audits each project using all 7 security checks, with aggregated reporting.
+
+### 3. **atlas_ip_access_analyzer.py** — IP Access List Analysis
+Audits IP whitelisting across all projects in an organization. Identifies and reports on projects open to the internet.
 
 ## Quick Start
 
@@ -12,12 +30,17 @@ pip install -r requirements.txt
 
 # 2. Create .env file with your credentials
 cat > .env << EOF
-ATLAS_ORG_ID=your_org_id_here
 ATLAS_API_PUBLIC_KEY=your_public_key_here
 ATLAS_API_PRIVATE_KEY=your_private_key_here
+ATLAS_PROJECT_ID=your_project_id_here
+ATLAS_ORG_ID=your_org_id_here
+ALERT_EMAIL=security@example.com
+DRY_RUN=true
 EOF
 
-# 3. Run the script
+# 3. Run a script
+python atlas_security_auditor.py
+
 python atlas_ip_access_analyzer.py
 ```
 
@@ -25,12 +48,26 @@ python atlas_ip_access_analyzer.py
 
 ## Features
 
+**Security Auditor (Project-Level)**
+- ✅ Audits 7 security best practices per project
+- ✅ Automatically fixes security issues (IP access, TLS, auditing, alerts)
+- ✅ Dry-run mode to preview changes without applying them
+- ✅ Detailed findings and remediation actions
+- ✅ Exit codes for CI/CD integration
+
+**Organization Auditor**
+- ✅ Discovers all projects in organization automatically
+- ✅ Runs all 7 security checks on every project
+- ✅ Aggregated reporting across organization
+- ✅ Per-project findings and issue summary
+
+**IP Access Analyzer**
 - ✅ Retrieves all projects from a given organization
 - ✅ Fetches IP access lists for each project
 - ✅ Groups IP addresses by project
 - ✅ Highlights projects open to the internet (`0.0.0.0/0` or `0.0.0.0`)
 - ✅ Color-coded terminal output for easy identification
-- ✅ **Security Summary Report** - Final report listing all projects with open internet access
+- ✅ **Security Summary Report** — Lists all projects with open internet access
 - ✅ Distinguishes between CIDR blocks (`0.0.0.0/0`) and IP addresses (`0.0.0.0`)
 - ✅ Provides security recommendations for remediation
 - ✅ Exports results to JSON file for further processing
@@ -72,7 +109,72 @@ The `requirements.txt` includes:
 
 ## Usage
 
-### Method 1: Command Line Arguments
+### Project-Level Security Audit
+
+Audit a single project for 7 critical security best practices:
+
+```bash
+# Using .env file (recommended)
+export ATLAS_PROJECT_ID=your_project_id_here
+python atlas_security_auditor.py
+
+# Dry-run mode (preview changes without applying)
+export DRY_RUN=true
+python atlas_security_auditor.py
+
+# Apply fixes automatically
+export DRY_RUN=false
+python atlas_security_auditor.py
+```
+
+**Configuration:**
+```bash
+ATLAS_PUBLIC_KEY=your_public_key_here
+ATLAS_PRIVATE_KEY=your_private_key_here
+ATLAS_PROJECT_ID=your_project_id_here
+ALERT_EMAIL=security@example.com
+DRY_RUN=true
+```
+
+### Organization-Level Security Audit
+
+Audit all projects in an organization:
+
+```bash
+# Discover all projects and audit each one
+export ATLAS_ORG_ID=your_org_id_here
+python atlas_organization_security_audit.py
+
+# Dry-run mode
+export DRY_RUN=true
+python atlas_organization_security_audit.py
+```
+
+**Configuration:**
+```bash
+ATLAS_PUBLIC_KEY=your_public_key_here
+ATLAS_PRIVATE_KEY=your_private_key_here
+ATLAS_ORG_ID=your_org_id_here
+ALERT_EMAIL=security@example.com
+DRY_RUN=true
+```
+
+### IP Access List Analysis
+
+Analyze IP whitelisting across all projects:
+
+```bash
+python atlas_ip_access_analyzer.py
+```
+
+**Configuration:**
+```bash
+ATLAS_ORG_ID=your_org_id_here
+ATLAS_PUBLIC_KEY=your_public_key_here
+ATLAS_PRIVATE_KEY=your_private_key_here
+```
+
+### Method 1: Command Line Arguments (IP Access Analyzer)
 
 ```bash
 python atlas_ip_access_analyzer.py <ORG_ID> <API_PUBLIC_KEY> <API_PRIVATE_KEY>
@@ -89,29 +191,65 @@ python atlas_ip_access_analyzer.py 5f1a2b3c4d5e6f7g8h9i0j1k your_public_key_here
 
 1. Create a `.env` file in the project directory:
 ```bash
-ATLAS_ORG_ID=5f1a2b3c4d5e6f7g8h9i0j1k
-ATLAS_API_PUBLIC_KEY=your_public_key_here
-ATLAS_API_PRIVATE_KEY=your_private_key_here
+ATLAS_PUBLIC_KEY=your_public_key_here
+ATLAS_PRIVATE_KEY=your_private_key_here
+ATLAS_PROJECT_ID=your_project_id_here
+ATLAS_ORG_ID=your_org_id_here
+ALERT_EMAIL=security@example.com
+DRY_RUN=false
 ```
 
-2. Run the script (it will automatically load the `.env` file):
+2. Run the scripts (they will automatically load the `.env` file):
 ```bash
+python atlas_security_auditor.py
+python atlas_organization_security_audit.py
 python atlas_ip_access_analyzer.py
 ```
 
-**Note:** The script uses `python-dotenv` to automatically load environment variables from the `.env` file. Make sure `.env` is in your `.gitignore` to avoid committing credentials.
+**Note:** The scripts use `python-dotenv` to automatically load environment variables from the `.env` file. Make sure `.env` is in your `.gitignore` to avoid committing credentials.
 
 #### Using shell environment variables
 
 Alternatively, you can export environment variables in your shell:
 
 ```bash
-export ATLAS_ORG_ID="5f1a2b3c4d5e6f7g8h9i0j1k"
-export ATLAS_API_PUBLIC_KEY="your_public_key_here"
-export ATLAS_API_PRIVATE_KEY="your_private_key_here"
+export ATLAS_PUBLIC_KEY="your_public_key_here"
+export ATLAS_PRIVATE_KEY="your_private_key_here"
+export ATLAS_PROJECT_ID="your_project_id_here"
+export ATLAS_ORG_ID="your_org_id_here"
+export ALERT_EMAIL="security@example.com"
+export DRY_RUN="false"
 
+python atlas_security_auditor.py
+python atlas_organization_security_audit.py
 python atlas_ip_access_analyzer.py
 ```
+
+## Security Checks Reference
+
+The security auditor performs the following checks:
+
+| Check | Status | Finding | Action | Notes |
+|-------|--------|---------|--------|-------|
+| **IP Access List** | PASS/FAIL/FIXED | Detects `0.0.0.0/0` or `0.0.0.0` | Removes wildcard entries | Enforces explicit IP/CIDR only |
+| **Database Users** | PASS/WARN | Flags `atlasAdmin` role assignments | Lists users (no auto-delete) | Production concern only |
+| **TLS Minimum Version** | PASS/FAIL/FIXED | TLS < 1.2 detected | Sets `minimumEnabledTlsProtocol: TLS1_2` | All clusters affected |
+| **Encryption at Rest** | PASS/WARN | Customer-managed keys disabled | Reports only | AWS KMS, Azure KV, GCP KMS |
+| **Auditing** | PASS/FAIL/FIXED | Auditing disabled/filters missing | Enables with event filter | Captures auth, user, collection events |
+| **Alerts** | PASS/FAIL/FIXED | Missing alert configs | Creates `USER_CREATED` and `AUTHENTICATION_FAILED` | Uses `ALERT_EMAIL` |
+| **Private Endpoints** | PASS/WARN | No private endpoints with public IPs | Reports only | Suggests private endpoint setup |
+
+**Check Status Codes:**
+- `PASS` — Control is compliant; no action needed
+- `WARN` — Issue detected but requires manual review/approval
+- `FAIL` — Control failed; manual or automatic remediation available
+- `FIXED` — Control was non-compliant and has been automatically remediated
+
+## Exit Codes
+
+Scripts return OS exit codes for CI/CD integration:
+- `0` — All checks PASS or FIXED successfully
+- `1` — One or more checks FAIL or WARN
 
 ## Finding Your Organization ID
 
@@ -172,8 +310,8 @@ Add the keys to your `.env` file:
 
 ```bash
 ATLAS_ORG_ID=your_organization_id_here
-ATLAS_API_PUBLIC_KEY=your_public_key_here
-ATLAS_API_PRIVATE_KEY=your_private_key_here
+ATLAS_PUBLIC_KEY=your_public_key_here
+ATLAS_PRIVATE_KEY=your_private_key_here
 ```
 
 ### Recommended Permissions
@@ -345,10 +483,38 @@ venv\Scripts\activate
 
 ## API Documentation
 
-This script uses **MongoDB Atlas API v2** with digest authentication. For more information, see:
+All scripts use **MongoDB Atlas Administration API v2** with HTTP Digest authentication. For more information:
 - [MongoDB Atlas Admin API v2](https://www.mongodb.com/docs/atlas/reference/api-resources-spec/v2/)
-- [Return All Projects](https://www.mongodb.com/docs/api/doc/atlas-admin-api-v2/operation/operation-listgroups)
-- [Return All IP Access List Entries](https://www.mongodb.com/docs/api/doc/atlas-admin-api-v2/operation/operation-listprojectipaddresses)
+
+**Endpoints Used:**
+
+**Organization & Projects**
+- [GET /orgs/{orgId}/projects](https://www.mongodb.com/docs/api/doc/atlas-admin-api-v2/operation/operation-listgroups) — List projects in organization
+
+**IP Access Lists**
+- [GET /groups/{groupId}/accessList](https://www.mongodb.com/docs/api/doc/atlas-admin-api-v2/operation/operation-listprojectipaddresses) — List IP access entries
+- [DELETE /groups/{groupId}/accessList/{ipAddress}](https://www.mongodb.com/docs/api/doc/atlas-admin-api-v2/operation/operation-deleteipaddress) — Remove IP access entry
+
+**Clusters**
+- [GET /groups/{groupId}/clusters](https://www.mongodb.com/docs/api/doc/atlas-admin-api-v2/operation/operation-listclusters) — List clusters
+- [PATCH /groups/{groupId}/clusters/{clusterName}](https://www.mongodb.com/docs/api/doc/atlas-admin-api-v2/operation/operation-updatecluster) — Update cluster settings
+
+**Database Users**
+- [GET /groups/{groupId}/databaseUsers](https://www.mongodb.com/docs/api/doc/atlas-admin-api-v2/operation/operation-listdatabaseusers) — List database users
+
+**Encryption at Rest**
+- [GET /groups/{groupId}/encryptionAtRest](https://www.mongodb.com/docs/api/doc/atlas-admin-api-v2/operation/operation-getencryptionatrest) — Check encryption config
+
+**Audit Logs**
+- [GET /groups/{groupId}/auditLogs](https://www.mongodb.com/docs/api/doc/atlas-admin-api-v2/operation/operation-getauditlogconfig) — Retrieve audit configuration
+- [PATCH /groups/{groupId}/auditLogs](https://www.mongodb.com/docs/api/doc/atlas-admin-api-v2/operation/operation-updateauditlogconfig) — Update audit configuration
+
+**Alerts**
+- [GET /groups/{groupId}/alertConfigs](https://www.mongodb.com/docs/api/doc/atlas-admin-api-v2/operation/operation-listmatchingalerts) — List alert configurations
+- [POST /groups/{groupId}/alertConfigs](https://www.mongodb.com/docs/api/doc/atlas-admin-api-v2/operation/operation-createalertconfiguration) — Create alert configuration
+
+**Private Endpoints**
+- [GET /groups/{groupId}/privateEndpoint/endpointIds](https://www.mongodb.com/docs/api/doc/atlas-admin-api-v2/operation/operation-listprivateendpoints) — List private endpoints
 
 ## License
 
