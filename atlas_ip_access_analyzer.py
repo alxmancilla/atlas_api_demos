@@ -19,7 +19,6 @@ import sys
 import os
 import requests
 from requests.auth import HTTPDigestAuth
-from typing import Dict, List, Tuple
 from urllib.parse import urljoin
 import json
 from dotenv import load_dotenv
@@ -55,7 +54,7 @@ class AtlasAPIClient:
         # MongoDB Atlas API requires digest authentication
         self.session.auth = HTTPDigestAuth(public_key, private_key)
     
-    def _make_request(self, endpoint: str, method: str = "GET") -> Dict:
+    def _make_request(self, endpoint: str, method: str = "GET") -> dict:
         """
         Make an authenticated request to the Atlas API.
 
@@ -77,7 +76,7 @@ class AtlasAPIClient:
         }
 
         try:
-            response = self.session.request(method, url, headers=headers, verify=False)
+            response = self.session.request(method, url, headers=headers, verify=certifi.where())
             response.raise_for_status()
 
             # Some endpoints return 204 No Content
@@ -91,7 +90,7 @@ class AtlasAPIClient:
         except requests.exceptions.RequestException as e:
             raise Exception(f"Request Error: {str(e)}")
     
-    def get_projects(self, org_id: str) -> List[Dict]:
+    def get_projects(self, org_id: str) -> list[dict]:
         """
         Get all projects in an organization.
 
@@ -99,32 +98,50 @@ class AtlasAPIClient:
             org_id: Organization ID
 
         Returns:
-            List of project dictionaries filtered by organization
+            List of project dictionaries belonging to the organization
         """
-        # Use the endpoint pattern from MongoDB Atlas API v2 documentation
-        endpoint = "groups?pretty=true"
-        response = self._make_request(endpoint)
-        all_projects = response.get("results", [])
-
-        # Filter projects by organization ID since the API doesn't support orgId query parameter
-        return [project for project in all_projects if project.get("orgId") == org_id]
+        # Use the org-scoped endpoint to avoid fetching all accessible projects
+        # and to correctly handle pagination beyond 100 results.
+        results = []
+        page_num = 1
+        page_size = 100
+        while True:
+            endpoint = f"orgs/{org_id}/groups?pageNum={page_num}&itemsPerPage={page_size}"
+            response = self._make_request(endpoint)
+            page_results = response.get("results", [])
+            results.extend(page_results)
+            total_count = response.get("totalCount", 0)
+            if len(results) >= total_count:
+                break
+            page_num += 1
+        return results
     
-    def get_ip_access_list(self, project_id: str) -> List[Dict]:
+    def get_ip_access_list(self, project_id: str) -> list[dict]:
         """
-        Get the IP access list for a project.
-        
+        Get the IP access list for a project (all pages).
+
         Args:
             project_id: Project ID
-        
+
         Returns:
             List of IP access list entry dictionaries
         """
-        endpoint = f"groups/{project_id}/accessList"
-        response = self._make_request(endpoint)
-        return response.get("results", [])
+        results = []
+        page_num = 1
+        page_size = 100
+        while True:
+            endpoint = f"groups/{project_id}/accessList?pageNum={page_num}&itemsPerPage={page_size}"
+            response = self._make_request(endpoint)
+            page_results = response.get("results", [])
+            results.extend(page_results)
+            total_count = response.get("totalCount", 0)
+            if len(results) >= total_count:
+                break
+            page_num += 1
+        return results
 
 
-def analyze_ip_entries(entries: List[Dict]) -> Tuple[List[str], bool]:
+def analyze_ip_entries(entries: list[dict]) -> tuple[list[str], bool]:
     """
     Analyze IP access list entries.
     
@@ -154,7 +171,7 @@ def analyze_ip_entries(entries: List[Dict]) -> Tuple[List[str], bool]:
     return sorted(ips), has_open_internet
 
 
-def print_security_summary(results: Dict[str, Tuple[List[str], bool]]):
+def print_security_summary(results: dict[str, tuple[list[str], bool]]):
     """
     Print a final security summary report of projects with open internet access.
 
@@ -195,7 +212,7 @@ def print_security_summary(results: Dict[str, Tuple[List[str], bool]]):
         print(f"  • Regularly audit IP access lists for compliance\n")
 
 
-def print_results(results: Dict[str, Tuple[List[str], bool]]):
+def print_results(results: dict[str, tuple[list[str], bool]]):
     """
     Print formatted results.
 
@@ -239,10 +256,9 @@ def print_results(results: Dict[str, Tuple[List[str], bool]]):
 
 
 def main():
-    """Load environment variables from .env file"""
+    """Main entry point."""
     load_dotenv()
-    
-    # "Main entry point."""
+
     # Get credentials from arguments or environment variables
     org_id = None
     public_key = None

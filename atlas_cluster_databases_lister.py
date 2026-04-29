@@ -18,7 +18,6 @@ import sys
 import os
 import requests
 from requests.auth import HTTPDigestAuth
-from typing import Dict, List
 from urllib.parse import urljoin
 import json
 from dotenv import load_dotenv
@@ -55,7 +54,7 @@ class AtlasAPIClient:
         # MongoDB Atlas API requires digest authentication
         self.session.auth = HTTPDigestAuth(public_key, private_key)
     
-    def _make_request(self, endpoint: str, method: str = "GET") -> Dict:
+    def _make_request(self, endpoint: str, method: str = "GET") -> dict:
         """
         Make an authenticated request to the Atlas API.
 
@@ -77,7 +76,6 @@ class AtlasAPIClient:
         }
 
         try:
-            # response = self.session.request(method, url, headers=headers, verify=False)
             response = self.session.request(method, url, headers=headers, verify=certifi.where())
             response.raise_for_status()
 
@@ -92,7 +90,7 @@ class AtlasAPIClient:
         except requests.exceptions.RequestException as e:
             raise Exception(f"Request Error: {str(e)}")
     
-    def get_projects(self, org_id: str) -> List[Dict]:
+    def get_projects(self, org_id: str) -> list[dict]:
         """
         Get all projects in an organization.
 
@@ -100,64 +98,52 @@ class AtlasAPIClient:
             org_id: Organization ID
 
         Returns:
-            List of project dictionaries filtered by organization
+            List of project dictionaries belonging to the organization
         """
-        # Use the endpoint pattern from MongoDB Atlas API v2 documentation
-        endpoint = "groups?pretty=true"
-        response = self._make_request(endpoint)
-        all_projects = response.get("results", [])
-
-        # Filter projects by organization ID since the API doesn't support orgId query parameter
-        return [project for project in all_projects if project.get("orgId") == org_id]
+        # Use the org-scoped endpoint to avoid fetching all accessible projects
+        # and to correctly handle pagination beyond 100 results.
+        results = []
+        page_num = 1
+        page_size = 100
+        while True:
+            endpoint = f"orgs/{org_id}/groups?pageNum={page_num}&itemsPerPage={page_size}"
+            response = self._make_request(endpoint)
+            page_results = response.get("results", [])
+            results.extend(page_results)
+            total_count = response.get("totalCount", 0)
+            if len(results) >= total_count:
+                break
+            page_num += 1
+        return results
     
-    def get_clusters(self, project_id: str) -> List[Dict]:
+    def get_clusters(self, project_id: str) -> list[dict]:
         """
-        Get all clusters for a project.
-        
+        Get all clusters for a project (all pages).
+
         Args:
             project_id: Project ID
-        
+
         Returns:
             List of cluster dictionaries
         """
-        endpoint = f"groups/{project_id}/clusters"
-        response = self._make_request(endpoint)
-        return response.get("results", [])
+        results = []
+        page_num = 1
+        page_size = 100
+        while True:
+            endpoint = f"groups/{project_id}/clusters?pageNum={page_num}&itemsPerPage={page_size}"
+            response = self._make_request(endpoint)
+            page_results = response.get("results", [])
+            results.extend(page_results)
+            total_count = response.get("totalCount", 0)
+            if len(results) >= total_count:
+                break
+            page_num += 1
+        return results
     
 
 
 
-def print_results(results: Dict[str, Dict[str, List[str]]]):
-    """
-    Print formatted results showing databases in each cluster.
-
-    Args:
-        results: Dictionary mapping project names to clusters and databases
-                 Structure: {project_name: {cluster_name: [database_names]}}
-    """
-    print(f"\n{Colors.BOLD}{'='*80}")
-    print(f"MongoDB Atlas Cluster Databases Inventory")
-    print(f"{'='*80}{Colors.RESET}\n")
-
-    if not results:
-        print(f"{Colors.YELLOW}No projects found.{Colors.RESET}")
-        return
-
-    total_projects = 0
-    total_clusters = 0
-    total_databases = 0
-
-    # Calculate totals
-    for project_data in results.values():
-        total_projects += 1
-        for databases in project_data.values():
-            total_clusters += 1
-            total_databases += len(databases)
-
-    print(f"{Colors.BLUE}Summary:{Colors.RESET}")
-    print(f"  Total Projects: {total_projects}")
-    print(f"  Total Clusters: {total_clusters}")
-def print_results(results: Dict[str, Dict[str, str]]):
+def print_results(results: dict[str, dict[str, str]]):
     """
     Print formatted results showing connection URIs for each cluster.
 

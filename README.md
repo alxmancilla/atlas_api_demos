@@ -30,8 +30,8 @@ pip install -r requirements.txt
 
 # 2. Create .env file with your credentials
 cat > .env << EOF
-ATLAS_API_PUBLIC_KEY=your_public_key_here
-ATLAS_API_PRIVATE_KEY=your_private_key_here
+ATLAS_PUBLIC_KEY=your_public_key_here
+ATLAS_PRIVATE_KEY=your_private_key_here
 ATLAS_PROJECT_ID=your_project_id_here
 ATLAS_ORG_ID=your_org_id_here
 ALERT_EMAIL=security@example.com
@@ -74,7 +74,7 @@ python atlas_ip_access_analyzer.py
 
 ## Prerequisites
 
-- Python 3.6+
+- Python 3.12+
 - MongoDB Atlas account with API access enabled
 - Atlas API credentials (public and private keys)
 
@@ -104,8 +104,9 @@ pip install -r requirements.txt
 ```
 
 The `requirements.txt` includes:
-- `requests` - HTTP library for API calls
-- `python-dotenv` - Loads environment variables from `.env` file
+- `requests>=2.32.0` - HTTP library for API calls (requires Python 3.10+)
+- `python-dotenv>=1.0.0` - Loads environment variables from `.env` file
+- `certifi>=2024.2.2` - Up-to-date CA certificate bundle for TLS verification
 
 ## Usage
 
@@ -236,7 +237,7 @@ The security auditor performs the following checks:
 | **TLS Minimum Version** | PASS/FAIL/FIXED | TLS < 1.2 detected | Sets `minimumEnabledTlsProtocol: TLS1_2` | All clusters affected |
 | **Encryption at Rest** | PASS/WARN | Customer-managed keys disabled | Reports only | AWS KMS, Azure KV, GCP KMS |
 | **Auditing** | PASS/FAIL/FIXED | Auditing disabled/filters missing | Enables with event filter | Captures auth, user, collection events |
-| **Alerts** | PASS/FAIL/FIXED | Missing alert configs | Creates `USER_CREATED` and `AUTHENTICATION_FAILED` | Uses `ALERT_EMAIL` |
+| **Alerts** | PASS/FAIL/FIXED | Missing alert configs | Creates `USER_ROLES_CHANGED_AUDIT` and `NO_PRIMARY` alerts | Uses `ALERT_EMAIL`; event names must be valid Atlas v2 `eventTypeName` values |
 | **Private Endpoints** | PASS/WARN | No private endpoints with public IPs | Reports only | Suggests private endpoint setup |
 
 **Check Status Codes:**
@@ -493,7 +494,7 @@ All scripts use **MongoDB Atlas Administration API v2** with HTTP Digest authent
 
 **IP Access Lists**
 - [GET /groups/{groupId}/accessList](https://www.mongodb.com/docs/api/doc/atlas-admin-api-v2/operation/operation-listprojectipaddresses) — List IP access entries
-- [DELETE /groups/{groupId}/accessList/{ipAddress}](https://www.mongodb.com/docs/api/doc/atlas-admin-api-v2/operation/operation-deleteipaddress) — Remove IP access entry
+- [DELETE /groups/{groupId}/accessList/{entryValue}](https://www.mongodb.com/docs/api/doc/atlas-admin-api-v2/operation/operation-deleteipaddress) — Remove IP access entry. **CIDR blocks must be URL-encoded** — the `/` in `0.0.0.0/0` must be percent-encoded as `0.0.0.0%2F0`, otherwise the gateway interprets it as a path separator and returns 404.
 
 **Clusters**
 - [GET /groups/{groupId}/clusters](https://www.mongodb.com/docs/api/doc/atlas-admin-api-v2/operation/operation-listclusters) — List clusters
@@ -506,15 +507,15 @@ All scripts use **MongoDB Atlas Administration API v2** with HTTP Digest authent
 - [GET /groups/{groupId}/encryptionAtRest](https://www.mongodb.com/docs/api/doc/atlas-admin-api-v2/operation/operation-getencryptionatrest) — Check encryption config
 
 **Audit Logs**
-- [GET /groups/{groupId}/auditLogs](https://www.mongodb.com/docs/api/doc/atlas-admin-api-v2/operation/operation-getauditlogconfig) — Retrieve audit configuration
-- [PATCH /groups/{groupId}/auditLogs](https://www.mongodb.com/docs/api/doc/atlas-admin-api-v2/operation/operation-updateauditlogconfig) — Update audit configuration
+- [GET /groups/{groupId}/auditLog](https://www.mongodb.com/docs/api/doc/atlas-admin-api-v2/operation/operation-getgroupauditlog) — Retrieve audit configuration
+- [PATCH /groups/{groupId}/auditLog](https://www.mongodb.com/docs/api/doc/atlas-admin-api-v2/operation/operation-updategroupauditlog) — Update audit configuration
 
 **Alerts**
 - [GET /groups/{groupId}/alertConfigs](https://www.mongodb.com/docs/api/doc/atlas-admin-api-v2/operation/operation-listmatchingalerts) — List alert configurations
 - [POST /groups/{groupId}/alertConfigs](https://www.mongodb.com/docs/api/doc/atlas-admin-api-v2/operation/operation-createalertconfiguration) — Create alert configuration
 
 **Private Endpoints**
-- [GET /groups/{groupId}/privateEndpoint/endpointIds](https://www.mongodb.com/docs/api/doc/atlas-admin-api-v2/operation/operation-listprivateendpoints) — List private endpoints
+- [GET /groups/{groupId}/privateEndpoint/{cloudProvider}/endpointService](https://www.mongodb.com/docs/api/doc/atlas-admin-api-v2/operation/operation-listgroupprivateendpointendpointservice) — List private endpoint services per cloud provider (AWS, AZURE, GCP). **Returns a plain JSON array**, not the standard paginated `{results, totalCount}` envelope; must be called with a plain GET, not through a pagination helper.
 
 ## License
 

@@ -18,7 +18,7 @@ import sys
 import json
 import logging
 from dataclasses import dataclass, field
-from typing import List, Dict, Any, Optional
+from typing import Any
 from enum import Enum
 import requests
 from requests.auth import HTTPDigestAuth
@@ -51,8 +51,8 @@ class CheckResult:
     """Result of a security check."""
     name: str
     status: CheckStatus
-    findings: List[str] = field(default_factory=list)
-    actions_taken: List[str] = field(default_factory=list)
+    findings: list[str] = field(default_factory=list)
+    actions_taken: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -60,7 +60,7 @@ class ProjectAuditResult:
     """Result of auditing a single project."""
     project_id: str
     project_name: str
-    checks: List[CheckResult] = field(default_factory=list)
+    checks: list[CheckResult] = field(default_factory=list)
     
     def overall_status(self) -> CheckStatus:
         """Determine overall status across all checks."""
@@ -99,7 +99,7 @@ class AtlasClient:
             'Content-Type': 'application/json'
         })
     
-    def _request(self, method: str, endpoint: str, **kwargs) -> Dict[str, Any]:
+    def _request(self, method: str, endpoint: str, **kwargs) -> dict[str, Any]:
         """Execute an API request with error handling and logging.
         
         Args:
@@ -133,7 +133,7 @@ class AtlasClient:
             return response.json()
         return {}
     
-    def post(self, endpoint: str, data: Dict[str, Any]) -> Dict[str, Any]:
+    def post(self, endpoint: str, data: dict[str, Any]) -> dict[str, Any]:
         """Execute a POST request.
         
         Args:
@@ -148,7 +148,7 @@ class AtlasClient:
             return {}
         return self._request('POST', endpoint, json=data)
     
-    def patch(self, endpoint: str, data: Dict[str, Any]) -> Dict[str, Any]:
+    def patch(self, endpoint: str, data: dict[str, Any]) -> dict[str, Any]:
         """Execute a PATCH request.
         
         Args:
@@ -163,7 +163,7 @@ class AtlasClient:
             return {}
         return self._request('PATCH', endpoint, json=data)
     
-    def delete(self, endpoint: str) -> Dict[str, Any]:
+    def delete(self, endpoint: str) -> dict[str, Any]:
         """Execute a DELETE request.
         
         Args:
@@ -177,7 +177,7 @@ class AtlasClient:
             return {}
         return self._request('DELETE', endpoint)
     
-    def get(self, endpoint: str) -> Dict[str, Any]:
+    def get(self, endpoint: str) -> dict[str, Any]:
         """Execute a GET request.
         
         Args:
@@ -188,7 +188,7 @@ class AtlasClient:
         """
         return self._request('GET', endpoint)
     
-    def get_if_available(self, endpoint: str) -> Optional[Dict[str, Any]]:
+    def get_if_available(self, endpoint: str) -> dict[str, Any] | None:
         """Execute a GET request, returning None if the endpoint is not available (404).
         
         This is useful for checking optional features that may not be available
@@ -209,7 +209,7 @@ class AtlasClient:
                 return None
             raise
     
-    def get_all_pages(self, endpoint: str, page_size: int = 100) -> List[Dict[str, Any]]:
+    def get_all_pages(self, endpoint: str, page_size: int = 100) -> list[dict[str, Any]]:
         """Get all paginated results.
         
         Args:
@@ -236,7 +236,7 @@ class AtlasClient:
         return results
 
 
-def get_organization_projects(client: AtlasClient, org_id: str) -> List[Dict[str, Any]]:
+def get_organization_projects(client: AtlasClient, org_id: str) -> list[dict[str, Any]]:
     """Retrieve all projects in an organization.
     
     Args:
@@ -291,8 +291,8 @@ def run_project_audit(
     client: AtlasClient,
     project_id: str,
     project_name: str,
-    config: Dict[str, str],
-    check_functions: Dict[str, callable]
+    config: dict[str, str],
+    check_functions: dict[str, callable]
 ) -> ProjectAuditResult:
     """Run all security checks for a single project.
     
@@ -336,7 +336,7 @@ def run_project_audit(
     return result
 
 
-def print_organization_summary(org_id: str, project_results: List[ProjectAuditResult]) -> int:
+def print_organization_summary(org_id: str, project_results: list[ProjectAuditResult]) -> int:
     """Print comprehensive summary of organization audit.
     
     Args:
@@ -403,9 +403,12 @@ def print_organization_summary(org_id: str, project_results: List[ProjectAuditRe
         )
         exit_code = 0
     else:
+        projects_with_issues = sum(
+            1 for pr in project_results
+            if pr.overall_status() in {CheckStatus.FAIL, CheckStatus.WARN}
+        )
         print(
-            f"✗ {len([s for s in overall_statuses if s in {CheckStatus.FAIL, CheckStatus.WARN}])} "
-            f"project(s) have issues requiring attention".center(100)
+            f"✗ {projects_with_issues} project(s) have issues requiring attention".center(100)
         )
         exit_code = 1
     
@@ -414,7 +417,7 @@ def print_organization_summary(org_id: str, project_results: List[ProjectAuditRe
     return exit_code
 
 
-def load_config() -> Dict[str, Any]:
+def load_config() -> dict[str, Any]:
     """Load configuration from environment variables.
     
     Returns:

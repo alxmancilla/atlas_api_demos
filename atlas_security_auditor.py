@@ -18,8 +18,9 @@ import sys
 import json
 import logging
 from dataclasses import dataclass, field
-from typing import Optional, List, Dict, Any
+from typing import Any
 from enum import Enum
+from urllib.parse import quote
 import requests
 from requests.auth import HTTPDigestAuth
 from dotenv import load_dotenv
@@ -47,78 +48,12 @@ class CheckStatus(Enum):
 
 
 @dataclass
-class IpAccessEntry:
-    """IP access list entry."""
-    ipAddress: Optional[str] = None
-    cidrBlock: Optional[str] = None
-    comment: Optional[str] = None
-
-
-@dataclass
-class DatabaseUser:
-    """Database user."""
-    username: str
-    roles: List[Dict[str, str]] = field(default_factory=list)
-    
-    def has_atlas_admin(self) -> bool:
-        """Check if user has atlasAdmin role."""
-        for role in self.roles:
-            if role.get('roleName') == 'atlasAdmin':
-                return True
-        return False
-
-
-@dataclass
-class AdvancedSettings:
-    """Cluster advanced settings."""
-    minimumEnabledTlsProtocol: Optional[str] = None
-    
-    def has_min_tls_12(self) -> bool:
-        """Check if minimum TLS version is 1.2 or higher."""
-        if not self.minimumEnabledTlsProtocol:
-            return False
-        return self.minimumEnabledTlsProtocol >= "TLS1_2"
-
-
-@dataclass
-class Cluster:
-    """MongoDB cluster."""
-    name: str
-    id: str
-    advancedSettings: Optional[Dict[str, Any]] = None
-
-
-@dataclass
-class AuditConfig:
-    """Audit configuration."""
-    enabled: bool
-    auditFilter: Optional[str] = None
-
-
-@dataclass
-class AlertConfig:
-    """Alert configuration."""
-    id: str
-    eventTypeName: str
-    enabled: bool
-    notifications: List[Dict[str, Any]] = field(default_factory=list)
-
-
-@dataclass
-class PrivateEndpoint:
-    """Private endpoint configuration."""
-    id: str
-    provider: str
-    endpointServiceName: Optional[str] = None
-
-
-@dataclass
 class CheckResult:
     """Result of a security check."""
     name: str
     status: CheckStatus
-    findings: List[str] = field(default_factory=list)
-    actions_taken: List[str] = field(default_factory=list)
+    findings: list[str] = field(default_factory=list)
+    actions_taken: list[str] = field(default_factory=list)
 
 
 class AtlasClient:
@@ -147,7 +82,7 @@ class AtlasClient:
             'Content-Type': 'application/json'
         })
     
-    def _request(self, method: str, endpoint: str, **kwargs) -> Dict[str, Any]:
+    def _request(self, method: str, endpoint: str, **kwargs) -> dict[str, Any]:
         """Execute an API request with error handling and logging.
         
         Args:
@@ -181,7 +116,7 @@ class AtlasClient:
             return response.json()
         return {}
     
-    def get(self, endpoint: str) -> Dict[str, Any]:
+    def get(self, endpoint: str) -> dict[str, Any]:
         """Execute a GET request.
         
         Args:
@@ -192,7 +127,7 @@ class AtlasClient:
         """
         return self._request('GET', endpoint)
     
-    def post(self, endpoint: str, data: Dict[str, Any]) -> Dict[str, Any]:
+    def post(self, endpoint: str, data: dict[str, Any]) -> dict[str, Any]:
         """Execute a POST request.
         
         Args:
@@ -207,7 +142,7 @@ class AtlasClient:
             return {}
         return self._request('POST', endpoint, json=data)
     
-    def patch(self, endpoint: str, data: Dict[str, Any]) -> Dict[str, Any]:
+    def patch(self, endpoint: str, data: dict[str, Any]) -> dict[str, Any]:
         """Execute a PATCH request.
         
         Args:
@@ -222,7 +157,7 @@ class AtlasClient:
             return {}
         return self._request('PATCH', endpoint, json=data)
     
-    def delete(self, endpoint: str) -> Dict[str, Any]:
+    def delete(self, endpoint: str) -> dict[str, Any]:
         """Execute a DELETE request.
         
         Args:
@@ -236,7 +171,7 @@ class AtlasClient:
             return {}
         return self._request('DELETE', endpoint)
     
-    def get_all_pages(self, endpoint: str, page_size: int = 100) -> List[Dict[str, Any]]:
+    def get_all_pages(self, endpoint: str, page_size: int = 100) -> list[dict[str, Any]]:
         """Get all paginated results.
         
         Args:
@@ -263,47 +198,54 @@ class AtlasClient:
         return results
 
 
-def check_ip_access_list(client: AtlasClient, cfg: Dict[str, str]) -> CheckResult:
+def check_ip_access_list(client: AtlasClient, cfg: dict[str, str]) -> CheckResult:
     """Check and remediate IP access list.
-    
+
     Removes 0.0.0.0/0 and 0.0.0.0 entries which allow open internet access.
     """
     result = CheckResult(name="IP Access List", status=CheckStatus.PASS)
-    
+
     try:
-        entries_response = client.get(f"/groups/{client.project_id}/accessList")
-        ip_list = entries_response.get('results', [])
-        
+        # Use get_all_pages to handle organizations with large IP access lists
+        ip_list = client.get_all_pages(f"/groups/{client.project_id}/accessList")
+
         open_internet_entries = [
             entry for entry in ip_list
             if entry.get('ipAddress') == '0.0.0.0' or entry.get('cidrBlock') == '0.0.0.0/0'
         ]
-        
+
         if open_internet_entries:
             result.status = CheckStatus.FAIL
+            fix_failed = False
             for entry in open_internet_entries:
                 entry_identifier = entry.get('ipAddress') or entry.get('cidrBlock')
                 result.findings.append(f"Open internet access: {entry_identifier}")
-                
+
                 if not client.dry_run:
                     try:
-                        client.delete(f"/groups/{client.project_id}/accessList/{entry_identifier}")
-                        result.status = CheckStatus.FIXED
+                        # URL-encode the identifier so that CIDR slashes (e.g. 0.0.0.0/0 → 0.0.0.0%2F0)
+                        # are not interpreted as path separators by the API gateway.
+                        encoded_identifier = quote(entry_identifier, safe='')
+                        client.delete(f"/groups/{client.project_id}/accessList/{encoded_identifier}")
                         result.actions_taken.append(f"Removed: {entry_identifier}")
                     except Exception as e:
                         logger.error(f"Failed to remove IP access entry: {e}")
-                        result.status = CheckStatus.FAIL
+                        fix_failed = True
                 else:
                     result.actions_taken.append(f"Would remove: {entry_identifier}")
-        
+
+            # Only mark as FIXED if every problematic entry was successfully removed
+            if not client.dry_run and result.actions_taken and not fix_failed:
+                result.status = CheckStatus.FIXED
+
     except Exception as e:
         result.status = CheckStatus.FAIL
         result.findings.append(f"API Error: {e}")
-    
+
     return result
 
 
-def check_database_users(client: AtlasClient, cfg: Dict[str, str]) -> CheckResult:
+def check_database_users(client: AtlasClient, cfg: dict[str, str]) -> CheckResult:
     """Check database users for atlasAdmin role.
     
     Flags any database user assigned the atlasAdmin built-in role.
@@ -333,55 +275,75 @@ def check_database_users(client: AtlasClient, cfg: Dict[str, str]) -> CheckResul
     return result
 
 
-def check_tls_minimum_version(client: AtlasClient, cfg: Dict[str, str]) -> CheckResult:
+def check_tls_minimum_version(client: AtlasClient, cfg: dict[str, str]) -> CheckResult:
     """Check and enforce TLS 1.2 minimum on all clusters.
-    
-    Verifies or patches advancedSettings.minimumEnabledTlsProtocol to TLS1_2.
+
+    Fetches each cluster's advanced configuration via the dedicated processArgs
+    endpoint (GET /groups/{groupId}/clusters/{clusterName}/processArgs) where
+    minimumEnabledTlsProtocol actually lives.  Patches via the same endpoint.
+    M0/M2/M5/Flex clusters do not support processArgs and are skipped.
     """
     result = CheckResult(name="TLS Minimum Version", status=CheckStatus.PASS)
-    
+
     try:
         clusters = client.get_all_pages(f"/groups/{client.project_id}/clusters")
-        
+        fix_failed = False
+
         for cluster in clusters:
             cluster_name = cluster.get('name')
-            advanced = cluster.get('advancedSettings', {})
-            tls_version = advanced.get('minimumEnabledTlsProtocol')
-            
+
+            # minimumEnabledTlsProtocol is in processArgs, not in the cluster document
+            try:
+                process_args = client.get(
+                    f"/groups/{client.project_id}/clusters/{cluster_name}/processArgs"
+                )
+            except AtlasAPIError as e:
+                # M0/M2/M5/Flex/Serverless clusters return 404 or 400 for processArgs
+                if '404' in str(e) or '400' in str(e):
+                    logger.debug(f"Skipping processArgs for {cluster_name}: unsupported tier")
+                    continue
+                raise
+
+            tls_version = process_args.get('minimumEnabledTlsProtocol')
+
             if not tls_version or tls_version < "TLS1_2":
                 result.status = CheckStatus.FAIL
                 result.findings.append(
                     f"Cluster '{cluster_name}' TLS: {tls_version or 'not set'}"
                 )
-                
+
                 if not client.dry_run:
                     try:
                         client.patch(
-                            f"/groups/{client.project_id}/clusters/{cluster_name}",
-                            {'advancedSettings': {'minimumEnabledTlsProtocol': 'TLS1_2'}}
+                            f"/groups/{client.project_id}/clusters/{cluster_name}/processArgs",
+                            {'minimumEnabledTlsProtocol': 'TLS1_2'}
                         )
-                        result.status = CheckStatus.FIXED
                         result.actions_taken.append(f"Set TLS 1.2 minimum on '{cluster_name}'")
-                    except Exception as patch_error:
+                    except AtlasAPIError as patch_error:
                         # 409 conflict likely means cluster is paused or being modified
                         if '409' in str(patch_error):
                             logger.debug(f"Cannot update {cluster_name}: cluster is paused")
-                            result.findings[-1] = f"Cluster '{cluster_name}' cannot be updated (paused or being modified)"
-                            result.status = CheckStatus.FAIL
+                            result.findings[-1] = (
+                                f"Cluster '{cluster_name}' cannot be updated (paused or being modified)"
+                            )
                         else:
                             logger.error(f"Failed to update TLS for {cluster_name}: {patch_error}")
-                            result.status = CheckStatus.FAIL
+                        fix_failed = True
                 else:
                     result.actions_taken.append(f"Would set TLS 1.2 on '{cluster_name}'")
-        
+
+        # Only mark as FIXED if every non-compliant cluster was successfully patched
+        if result.status == CheckStatus.FAIL and result.actions_taken and not fix_failed:
+            result.status = CheckStatus.FIXED
+
     except Exception as e:
         result.status = CheckStatus.FAIL
         result.findings.append(f"API Error: {e}")
-    
+
     return result
 
 
-def check_encryption_at_rest(client: AtlasClient, cfg: Dict[str, str]) -> CheckResult:
+def check_encryption_at_rest(client: AtlasClient, cfg: dict[str, str]) -> CheckResult:
     """Check if customer-managed key encryption is enabled.
     
     Verifies AWS KMS, Azure Key Vault, or GCP KMS configuration.
@@ -412,65 +374,55 @@ def check_encryption_at_rest(client: AtlasClient, cfg: Dict[str, str]) -> CheckR
     return result
 
 
-def check_auditing(client: AtlasClient, cfg: Dict[str, str]) -> CheckResult:
+def check_auditing(client: AtlasClient, cfg: dict[str, str]) -> CheckResult:
     """Check and enable database auditing with required event filters.
-    
-    Ensures auditing captures: authenticate, createUser, dropUser, 
-    createCollection, dropCollection.
-    
+
+    Uses GET/PATCH /groups/{groupId}/auditLog (singular) as per Atlas Admin API v2.
+    The `enabled` field controls whether auditing is active; `auditAuthorizationSuccess`
+    is a separate, optional sub-setting that can degrade performance.
+
     Note: Auditing is only available on M10+ clusters.
     """
     result = CheckResult(name="Auditing", status=CheckStatus.PASS)
-    
+
     required_events = {
-        'authenticate', 'createUser', 'dropUser', 
+        'authenticate', 'createUser', 'dropUser',
         'createDatabase', 'dropDatabase',
         'createCollection', 'dropCollection'
     }
-    
+
+    audit_endpoint = f"/groups/{client.project_id}/auditLog"
+
     try:
-        audit_config = None
-        last_error = None
-        
-        # Try different possible audit endpoints
-        audit_endpoints = [
-            f"/groups/{client.project_id}/auditLogs",
-            f"/groups/{client.project_id}/auditLog",
-        ]
-        
-        for endpoint in audit_endpoints:
-            try:
-                audit_config = client.get(endpoint)
-                break
-            except Exception as e:
-                last_error = e
-                continue
-        
-        if audit_config is None:
-            # Auditing endpoint not available - likely cluster tier doesn't support it (need M10+)
-            if last_error and '404' in str(last_error):
-                result.status = CheckStatus.WARN
-                result.findings.append("Auditing not available (requires M10+ cluster tier)")
-            else:
-                result.status = CheckStatus.WARN
-                result.findings.append(f"Could not access audit configuration")
-            return result
-        
-        if not audit_config.get('auditAuthorizationSuccess'):
+        audit_config = client.get(audit_endpoint)
+    except AtlasAPIError as e:
+        # 404 means the project has no M10+ clusters — auditing tier is unavailable
+        if '404' in str(e):
+            result.status = CheckStatus.WARN
+            result.findings.append("Auditing not available (requires M10+ cluster tier)")
+        else:
+            result.status = CheckStatus.WARN
+            result.findings.append(f"Could not access audit configuration: {type(e).__name__}")
+            logger.debug(f"Auditing check exception: {e}")
+        return result
+
+    try:
+        if not audit_config.get('enabled'):
             result.status = CheckStatus.FAIL
             result.findings.append("Database auditing is not enabled")
-            
+
             if not client.dry_run:
                 try:
                     audit_filter = {
                         'atype': {'$in': sorted(list(required_events))}
                     }
-                    
+
                     client.patch(
-                        f"/groups/{client.project_id}/auditLogs",
+                        audit_endpoint,
                         {
-                            'auditAuthorizationSuccess': True,
-                            'auditFilter': json.dumps(audit_filter)
+                            'enabled': True,
+                            'auditFilter': json.dumps(audit_filter),
+                            'auditAuthorizationSuccess': False
                         }
                     )
                     result.status = CheckStatus.FIXED
@@ -480,16 +432,16 @@ def check_auditing(client: AtlasClient, cfg: Dict[str, str]) -> CheckResult:
                     result.status = CheckStatus.FAIL
             else:
                 result.actions_taken.append("Would enable auditing with event filter")
-        
+
     except Exception as e:
         result.status = CheckStatus.WARN
         result.findings.append(f"Could not check auditing: {type(e).__name__}")
         logger.debug(f"Auditing check exception: {e}")
-    
+
     return result
 
 
-def check_alerts(client: AtlasClient, cfg: Dict[str, str]) -> CheckResult:
+def check_alerts(client: AtlasClient, cfg: dict[str, str]) -> CheckResult:
     """Check and create missing alert configurations.
     
     Verifies alerts exist for important security events.
@@ -503,8 +455,9 @@ def check_alerts(client: AtlasClient, cfg: Dict[str, str]) -> CheckResult:
         result.findings.append("ALERT_EMAIL not configured")
         return result
     
-    # Use valid Atlas alert event type names (check Atlas documentation for current list)
-    required_alerts = ['AUTHENTICATION_FAILED_ATTEMPTS', 'GROUP_CREATED']
+    # Valid Atlas Admin API v2 alertable event types (project-level).
+    # See: https://www.mongodb.com/docs/atlas/reference/atlas-alert-event-types/
+    required_alerts = ['USER_ROLES_CHANGED_AUDIT', 'NO_PRIMARY']
     
     try:
         alerts = client.get_all_pages(f"/groups/{client.project_id}/alertConfigs")
@@ -555,49 +508,62 @@ def check_alerts(client: AtlasClient, cfg: Dict[str, str]) -> CheckResult:
     return result
 
 
-def check_private_endpoints(client: AtlasClient, cfg: Dict[str, str]) -> CheckResult:
+def check_private_endpoints(client: AtlasClient, cfg: dict[str, str]) -> CheckResult:
     """List private endpoints and warn if none are configured with public IP access.
-    
+
+    Queries each cloud provider's endpoint service list using the correct Atlas
+    Admin API v2 path:
+      GET /groups/{groupId}/privateEndpoint/{cloudProvider}/endpointService
+
     Alerts if there are public IP access entries but no private endpoints.
     """
     result = CheckResult(name="Private Endpoints", status=CheckStatus.PASS)
-    
+
     try:
         endpoints = []
-        
-        # Try to get private endpoints - may not be available on all tiers
-        try:
-            endpoints = client.get_all_pages(f"/groups/{client.project_id}/privateEndpoint/endpointIds")
-        except (AtlasAPIError, Exception):
-            # Private endpoints may not be available or may use different endpoint
-            pass
-        
+
+        # Query each supported cloud provider separately — the API is provider-scoped.
+        # This endpoint returns a plain JSON array, NOT a paginated {results, totalCount}
+        # object, so we must use client.get() directly instead of get_all_pages().
+        for provider in ('AWS', 'AZURE', 'GCP'):
+            try:
+                raw = client.get(
+                    f"/groups/{client.project_id}/privateEndpoint/{provider}/endpointService"
+                )
+                # Defensive: handle both array and paginated-dict responses
+                if isinstance(raw, list):
+                    endpoints.extend(raw)
+                else:
+                    endpoints.extend(raw.get('results', []))
+            except AtlasAPIError:
+                # Provider not configured or not available on this tier — skip silently
+                pass
+
         if not endpoints:
             try:
-                ip_response = client.get(f"/groups/{client.project_id}/accessList")
-                ip_entries = ip_response.get('results', [])
-                
+                ip_entries = client.get_all_pages(f"/groups/{client.project_id}/accessList")
+
                 if ip_entries:
                     result.status = CheckStatus.WARN
                     result.findings.append(
                         f"No private endpoints but {len(ip_entries)} public IP entries exist"
                     )
-            except (AtlasAPIError, Exception):
+            except AtlasAPIError:
                 # IP access list might also fail - that's OK
                 pass
         else:
-            result.findings.append(f"{len(endpoints)} private endpoint(s) configured")
-    
+            result.findings.append(f"{len(endpoints)} private endpoint service(s) configured")
+
     except Exception as e:
         # Catch any remaining exceptions to prevent propagation
         result.status = CheckStatus.WARN
         result.findings.append(f"Could not verify private endpoints: {type(e).__name__}")
         logger.debug(f"Private endpoints check exception: {e}")
-    
+
     return result
 
 
-def load_config() -> Dict[str, Any]:
+def load_config() -> dict[str, Any]:
     """Load configuration from environment variables.
     
     Returns:
@@ -621,7 +587,7 @@ def load_config() -> Dict[str, Any]:
     return config
 
 
-def print_summary(results: List[CheckResult]) -> int:
+def print_summary(results: list[CheckResult]) -> int:
     """Print summary table and return appropriate exit code.
     
     Args:
