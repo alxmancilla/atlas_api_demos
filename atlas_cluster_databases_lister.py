@@ -6,7 +6,7 @@ This script retrieves all projects from a given organization and displays
 the connection URI for each cluster in every project.
 
 Usage:
-    python atlas_cluster_databases_lister.py <ORG_ID> <API_PUBLIC_KEY> <API_PRIVATE_KEY>
+    python3 atlas_cluster_databases_lister.py
 
 Environment variables:
     ATLAS_ORG_ID - Organization ID
@@ -16,6 +16,7 @@ Environment variables:
 
 import sys
 import os
+import time
 import requests
 from requests.auth import HTTPDigestAuth
 from urllib.parse import urljoin
@@ -39,17 +40,23 @@ class Colors:
 
 class AtlasAPIClient:
     """Client for interacting with MongoDB Atlas API."""
+
+    RETRY_STATUS_CODES = {429, 500, 502, 503, 504}
     
-    def __init__(self, public_key: str, private_key: str):
+    def __init__(self, public_key: str, private_key: str, timeout: float = 30.0, max_retries: int = 2):
         """
         Initialize the Atlas API client.
 
         Args:
             public_key: Atlas API public key
             private_key: Atlas API private key
+            timeout: Request timeout in seconds
+            max_retries: Number of retries for transient request failures
         """
         self.public_key = public_key
         self.private_key = private_key
+        self.timeout = timeout
+        self.max_retries = max_retries
         self.session = requests.Session()
         # MongoDB Atlas API requires digest authentication
         self.session.auth = HTTPDigestAuth(public_key, private_key)
@@ -75,20 +82,41 @@ class AtlasAPIClient:
             "Accept": "application/vnd.atlas.2025-03-12+json"
         }
 
-        try:
-            response = self.session.request(method, url, headers=headers, verify=certifi.where())
-            response.raise_for_status()
+        for attempt in range(self.max_retries + 1):
+            try:
+                response = self.session.request(
+                    method,
+                    url,
+                    headers=headers,
+                    verify=certifi.where(),
+                    timeout=self.timeout,
+                )
 
-            # Some endpoints return 204 No Content
-            if response.status_code == 204:
-                return {}
+                if response.status_code in self.RETRY_STATUS_CODES and attempt < self.max_retries:
+                    retry_after = response.headers.get("Retry-After")
+                    try:
+                        delay = float(retry_after) if retry_after else 2 ** attempt
+                    except ValueError:
+                        delay = 2 ** attempt
+                    time.sleep(delay)
+                    continue
 
-            return response.json()
+                response.raise_for_status()
 
-        except requests.exceptions.HTTPError as e:
-            raise Exception(f"Atlas API Error: {e.response.status_code} - {e.response.text}")
-        except requests.exceptions.RequestException as e:
-            raise Exception(f"Request Error: {str(e)}")
+                # Some endpoints return 204 No Content
+                if response.status_code == 204:
+                    return {}
+
+                return response.json()
+
+            except requests.exceptions.HTTPError as e:
+                raise Exception(f"Atlas API Error: {e.response.status_code} - {e.response.text}")
+            except requests.exceptions.RequestException as e:
+                if attempt >= self.max_retries:
+                    raise Exception(f"Request Error: {str(e)}")
+                time.sleep(2 ** attempt)
+
+        raise Exception("Request Error: exhausted retries")
     
     def get_projects(self, org_id: str) -> list[dict]:
         """
@@ -196,10 +224,13 @@ def main():
     public_key = None
     private_key = None
     
-    if len(sys.argv) == 4:
+    if len(sys.argv) == 2:
         org_id = sys.argv[1]
-        public_key = sys.argv[2]
-        private_key = sys.argv[3]
+        public_key = os.getenv("ATLAS_PUBLIC_KEY")
+        private_key = os.getenv("ATLAS_PRIVATE_KEY")
+    elif len(sys.argv) > 1:
+        print(f"{Colors.RED}Error: Pass API keys through environment variables, not command-line arguments.{Colors.RESET}")
+        sys.exit(1)
     else:
         org_id = os.getenv("ATLAS_ORG_ID")
         public_key = os.getenv("ATLAS_PUBLIC_KEY")
@@ -209,8 +240,9 @@ def main():
     if not all([org_id, public_key, private_key]):
         print(f"{Colors.RED}Error: Missing credentials{Colors.RESET}")
         print("\nUsage:")
-        print("  python atlas_cluster_databases_lister.py <ORG_ID> <API_PUBLIC_KEY> <API_PRIVATE_KEY>")
-        print("\nOr set environment variables:")
+        print("  python3 atlas_cluster_databases_lister.py")
+        print("  python3 atlas_cluster_databases_lister.py <ORG_ID>")
+        print("\nSet environment variables:")
         print("  ATLAS_ORG_ID")
         print("  ATLAS_PUBLIC_KEY")
         print("  ATLAS_PRIVATE_KEY")

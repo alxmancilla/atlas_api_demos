@@ -17,6 +17,7 @@ import os
 import sys
 import json
 import logging
+import time
 from dataclasses import dataclass, field
 from typing import Any
 from enum import Enum
@@ -61,8 +62,17 @@ class AtlasClient:
     
     BASE_URL = "https://cloud.mongodb.com/api/atlas/v2"
     API_VERSION = "application/vnd.atlas.2023-02-01+json"
+    RETRY_STATUS_CODES = {429, 500, 502, 503, 504}
     
-    def __init__(self, public_key: str, private_key: str, project_id: str, dry_run: bool = False):
+    def __init__(
+        self,
+        public_key: str,
+        private_key: str,
+        project_id: str | None = None,
+        dry_run: bool = False,
+        timeout: float = 30.0,
+        max_retries: int = 2,
+    ):
         """Initialize Atlas API client.
         
         Args:
@@ -70,11 +80,15 @@ class AtlasClient:
             private_key: Atlas API private key
             project_id: Atlas project ID
             dry_run: If True, skip all mutating operations
+            timeout: Request timeout in seconds
+            max_retries: Number of retries for transient request failures
         """
         self.public_key = public_key
         self.private_key = private_key
         self.project_id = project_id
         self.dry_run = dry_run
+        self.timeout = timeout
+        self.max_retries = max_retries
         self.session = requests.Session()
         self.session.auth = HTTPDigestAuth(public_key, private_key)
         self.session.headers.update({
@@ -98,23 +112,46 @@ class AtlasClient:
         """
         url = f"{self.BASE_URL}{endpoint}"
         logger.debug(f"{method} {endpoint}")
-        
-        response = self.session.request(method, url, **kwargs)
-        
-        logger.debug(f"Status: {response.status_code}")
-        
-        if not (200 <= response.status_code < 300):
+
+        for attempt in range(self.max_retries + 1):
             try:
-                error_detail = response.json()
-            except Exception:
-                error_detail = response.text
-            raise AtlasAPIError(
-                f"{method} {endpoint} returned {response.status_code}: {error_detail}"
-            )
-        
-        if response.text:
-            return response.json()
-        return {}
+                response = self.session.request(method, url, timeout=self.timeout, **kwargs)
+            except requests.exceptions.RequestException as e:
+                if attempt >= self.max_retries:
+                    raise AtlasAPIError(f"{method} {endpoint} request failed: {e}") from e
+                time.sleep(2 ** attempt)
+                continue
+
+            logger.debug(f"Status: {response.status_code}")
+
+            if response.status_code in self.RETRY_STATUS_CODES and attempt < self.max_retries:
+                retry_after = response.headers.get('Retry-After')
+                try:
+                    delay = float(retry_after) if retry_after else 2 ** attempt
+                except ValueError:
+                    delay = 2 ** attempt
+                time.sleep(delay)
+                continue
+
+            if not (200 <= response.status_code < 300):
+                try:
+                    error_detail = response.json()
+                except Exception:
+                    error_detail = response.text
+                raise AtlasAPIError(
+                    f"{method} {endpoint} returned {response.status_code}: {error_detail}"
+                )
+
+            if response.text:
+                try:
+                    return response.json()
+                except ValueError as e:
+                    raise AtlasAPIError(
+                        f"{method} {endpoint} returned invalid JSON"
+                    ) from e
+            return {}
+
+        raise AtlasAPIError(f"{method} {endpoint} failed after retries")
     
     def get(self, endpoint: str) -> dict[str, Any]:
         """Execute a GET request.
@@ -582,7 +619,7 @@ def load_config() -> dict[str, Any]:
         config[key] = value
     
     config['ALERT_EMAIL'] = os.getenv('ALERT_EMAIL', '').strip()
-    config['DRY_RUN'] = os.getenv('DRY_RUN', 'false').lower() == 'true'
+    config['DRY_RUN'] = os.getenv('DRY_RUN', 'true').lower() == 'true'
     
     return config
 

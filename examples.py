@@ -5,7 +5,7 @@ Example usage of the Atlas IP Access Analyzer script.
 This file demonstrates different ways to use the analyzer in your own code.
 """
 
-from atlas_ip_access_analyzer import AtlasAPIClient, analyze_ip_entries, print_results
+from atlas_ip_access_analyzer import AtlasAPIClient, ProjectIPResult, analyze_ip_entries, print_results
 
 
 def example_1_command_line():
@@ -13,7 +13,8 @@ def example_1_command_line():
     print("Example 1: Command-line usage")
     print("=" * 60)
     print("""
-    python atlas_ip_access_analyzer.py <ORG_ID> <PUBLIC_KEY> <PRIVATE_KEY>
+    # Set ATLAS_ORG_ID, ATLAS_PUBLIC_KEY, and ATLAS_PRIVATE_KEY in your environment or .env file first.
+    python3 atlas_ip_access_analyzer.py
     """)
 
 
@@ -46,7 +47,7 @@ def example_2_programmatic_usage():
         # Analyze entries
         ips, has_open_internet = analyze_ip_entries(ip_entries)
         
-        results[project_name] = (ips, has_open_internet)
+        results[project_name] = ProjectIPResult(ips, has_open_internet)
         
         print(f"\nProject: {project_name}")
         print(f"  IP Count: {len(ips)}")

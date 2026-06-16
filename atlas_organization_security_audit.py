@@ -15,14 +15,25 @@ Configuration via environment variables:
 
 import os
 import sys
-import json
 import logging
 from dataclasses import dataclass, field
+from collections.abc import Callable
 from typing import Any
-from enum import Enum
-import requests
-from requests.auth import HTTPDigestAuth
 from dotenv import load_dotenv
+
+from atlas_security_auditor import (
+    AtlasAPIError,
+    AtlasClient,
+    CheckResult,
+    CheckStatus,
+    check_alerts,
+    check_auditing,
+    check_database_users,
+    check_encryption_at_rest,
+    check_ip_access_list,
+    check_private_endpoints,
+    check_tls_minimum_version,
+)
 
 
 # Configure logging
@@ -31,28 +42,6 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
-
-
-class AtlasAPIError(Exception):
-    """Exception raised for Atlas API errors."""
-    pass
-
-
-class CheckStatus(Enum):
-    """Status of a security check."""
-    PASS = "PASS"
-    WARN = "WARN"
-    FAIL = "FAIL"
-    FIXED = "FIXED"
-
-
-@dataclass
-class CheckResult:
-    """Result of a security check."""
-    name: str
-    status: CheckStatus
-    findings: list[str] = field(default_factory=list)
-    actions_taken: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -74,168 +63,6 @@ class ProjectAuditResult:
         else:
             return CheckStatus.PASS
 
-
-class AtlasClient:
-    """Thin API client for MongoDB Atlas Administration API v2."""
-    
-    BASE_URL = "https://cloud.mongodb.com/api/atlas/v2"
-    API_VERSION = "application/vnd.atlas.2023-02-01+json"
-    
-    def __init__(self, public_key: str, private_key: str, dry_run: bool = False):
-        """Initialize Atlas API client.
-        
-        Args:
-            public_key: Atlas API public key
-            private_key: Atlas API private key
-            dry_run: If True, skip all mutating operations
-        """
-        self.public_key = public_key
-        self.private_key = private_key
-        self.dry_run = dry_run
-        self.session = requests.Session()
-        self.session.auth = HTTPDigestAuth(public_key, private_key)
-        self.session.headers.update({
-            'Accept': self.API_VERSION,
-            'Content-Type': 'application/json'
-        })
-    
-    def _request(self, method: str, endpoint: str, **kwargs) -> dict[str, Any]:
-        """Execute an API request with error handling and logging.
-        
-        Args:
-            method: HTTP method (GET, POST, PATCH, DELETE)
-            endpoint: API endpoint path
-            **kwargs: Additional arguments to pass to requests
-            
-        Returns:
-            Parsed JSON response
-            
-        Raises:
-            AtlasAPIError: If response status is not 2xx
-        """
-        url = f"{self.BASE_URL}{endpoint}"
-        logger.debug(f"{method} {endpoint}")
-        
-        response = self.session.request(method, url, **kwargs)
-        
-        logger.debug(f"Status: {response.status_code}")
-        
-        if not (200 <= response.status_code < 300):
-            try:
-                error_detail = response.json()
-            except Exception:
-                error_detail = response.text
-            raise AtlasAPIError(
-                f"{method} {endpoint} returned {response.status_code}: {error_detail}"
-            )
-        
-        if response.text:
-            return response.json()
-        return {}
-    
-    def post(self, endpoint: str, data: dict[str, Any]) -> dict[str, Any]:
-        """Execute a POST request.
-        
-        Args:
-            endpoint: API endpoint path
-            data: Request payload
-            
-        Returns:
-            Parsed JSON response
-        """
-        if self.dry_run:
-            logger.warning(f"DRY_RUN: Skipping POST {endpoint}")
-            return {}
-        return self._request('POST', endpoint, json=data)
-    
-    def patch(self, endpoint: str, data: dict[str, Any]) -> dict[str, Any]:
-        """Execute a PATCH request.
-        
-        Args:
-            endpoint: API endpoint path
-            data: Request payload
-            
-        Returns:
-            Parsed JSON response
-        """
-        if self.dry_run:
-            logger.warning(f"DRY_RUN: Skipping PATCH {endpoint}")
-            return {}
-        return self._request('PATCH', endpoint, json=data)
-    
-    def delete(self, endpoint: str) -> dict[str, Any]:
-        """Execute a DELETE request.
-        
-        Args:
-            endpoint: API endpoint path
-            
-        Returns:
-            Parsed JSON response
-        """
-        if self.dry_run:
-            logger.warning(f"DRY_RUN: Skipping DELETE {endpoint}")
-            return {}
-        return self._request('DELETE', endpoint)
-    
-    def get(self, endpoint: str) -> dict[str, Any]:
-        """Execute a GET request.
-        
-        Args:
-            endpoint: API endpoint path
-            
-        Returns:
-            Parsed JSON response
-        """
-        return self._request('GET', endpoint)
-    
-    def get_if_available(self, endpoint: str) -> dict[str, Any] | None:
-        """Execute a GET request, returning None if the endpoint is not available (404).
-        
-        This is useful for checking optional features that may not be available
-        on all project tiers.
-        
-        Args:
-            endpoint: API endpoint path
-            
-        Returns:
-            Parsed JSON response, or None if the endpoint returns 404
-        """
-        try:
-            return self.get(endpoint)
-        except AtlasAPIError as e:
-            # If the feature isn't available (404), return None instead of raising
-            if '404' in str(e):
-                logger.debug(f"Feature not available: {endpoint}")
-                return None
-            raise
-    
-    def get_all_pages(self, endpoint: str, page_size: int = 100) -> list[dict[str, Any]]:
-        """Get all paginated results.
-        
-        Args:
-            endpoint: API endpoint path
-            page_size: Items per page
-            
-        Returns:
-            List of all results across all pages
-        """
-        results = []
-        page_num = 1
-        
-        while True:
-            data = self.get(f"{endpoint}?pageNum={page_num}&itemsPerPage={page_size}")
-            
-            results.extend(data.get('results', []))
-            
-            total_count = data.get('totalCount', 0)
-            if len(results) >= total_count:
-                break
-            
-            page_num += 1
-        
-        return results
-
-
 def get_organization_projects(client: AtlasClient, org_id: str) -> list[dict[str, Any]]:
     """Retrieve all projects in an organization.
     
@@ -253,38 +80,20 @@ def get_organization_projects(client: AtlasClient, org_id: str) -> list[dict[str
 
 
 def import_security_checks():
-    """Dynamically import security check functions from auditor script.
+    """Return security check functions from the project-level auditor.
     
     Returns:
         Dictionary mapping check names to their functions
     """
-    try:
-        import importlib.util
-        import sys
-        
-        # Clear any cached module to ensure we get the fresh/updated version
-        if 'atlas_security_auditor' in sys.modules:
-            del sys.modules['atlas_security_auditor']
-        
-        spec = importlib.util.spec_from_file_location(
-            "atlas_security_auditor",
-            os.path.join(os.path.dirname(__file__), "atlas_security_auditor.py")
-        )
-        auditor_module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(auditor_module)
-        
-        return {
-            'check_ip_access_list': auditor_module.check_ip_access_list,
-            'check_database_users': auditor_module.check_database_users,
-            'check_tls_minimum_version': auditor_module.check_tls_minimum_version,
-            'check_encryption_at_rest': auditor_module.check_encryption_at_rest,
-            'check_auditing': auditor_module.check_auditing,
-            'check_alerts': auditor_module.check_alerts,
-            'check_private_endpoints': auditor_module.check_private_endpoints,
-        }
-    except Exception as e:
-        logger.exception("Failed to import security checks")
-        raise
+    return {
+        'check_ip_access_list': check_ip_access_list,
+        'check_database_users': check_database_users,
+        'check_tls_minimum_version': check_tls_minimum_version,
+        'check_encryption_at_rest': check_encryption_at_rest,
+        'check_auditing': check_auditing,
+        'check_alerts': check_alerts,
+        'check_private_endpoints': check_private_endpoints,
+    }
 
 
 def run_project_audit(
@@ -292,7 +101,7 @@ def run_project_audit(
     project_id: str,
     project_name: str,
     config: dict[str, str],
-    check_functions: dict[str, callable]
+    check_functions: dict[str, Callable[[AtlasClient, dict[str, str]], CheckResult]]
 ) -> ProjectAuditResult:
     """Run all security checks for a single project.
     
@@ -313,9 +122,11 @@ def run_project_audit(
     project_client = AtlasClient(
         client.public_key,
         client.private_key,
-        dry_run=client.dry_run
+        project_id,
+        dry_run=client.dry_run,
+        timeout=client.timeout,
+        max_retries=client.max_retries,
     )
-    project_client.project_id = project_id
     
     logger.info(f"Auditing project: {project_name} ({project_id})")
     
@@ -436,7 +247,7 @@ def load_config() -> dict[str, Any]:
         config[key] = value
     
     config['ALERT_EMAIL'] = os.getenv('ALERT_EMAIL', '').strip()
-    config['DRY_RUN'] = os.getenv('DRY_RUN', 'false').lower() == 'true'
+    config['DRY_RUN'] = os.getenv('DRY_RUN', 'true').lower() == 'true'
     
     return config
 

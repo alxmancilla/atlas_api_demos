@@ -14,4 +14,4 @@ else
 fi
 
 # Run the Python script
-python atlas_ip_access_analyzer.py "$@"
+python3 atlas_ip_access_analyzer.py "$@"

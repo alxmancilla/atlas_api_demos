@@ -1,6 +1,6 @@
-# MongoDB Atlas API demos
+# atlas-security-ops
 
-Collection of Python scripts demonstrating MongoDB Atlas API capabilities. Includes comprehensive security auditing, IP access list analysis, and organization/project data retrieval through the MongoDB Atlas Administration API v2.
+Python toolkit for auditing and enforcing security best practices on MongoDB Atlas projects and organizations via the Atlas Administration API v2. Covers IP access control, TLS enforcement, encryption, auditing, alert configuration, private endpoints, and cluster inspection.
 
 ## Scripts Overview
 
@@ -39,9 +39,9 @@ DRY_RUN=true
 EOF
 
 # 3. Run a script
-python atlas_security_auditor.py
+python3 atlas_security_auditor.py
 
-python atlas_ip_access_analyzer.py
+python3 atlas_ip_access_analyzer.py
 ```
 
 > **Need API keys?** See [Creating API Keys](#creating-api-keys) section below for detailed instructions.
@@ -117,15 +117,15 @@ Audit a single project for 7 critical security best practices:
 ```bash
 # Using .env file (recommended)
 export ATLAS_PROJECT_ID=your_project_id_here
-python atlas_security_auditor.py
+python3 atlas_security_auditor.py
 
 # Dry-run mode (preview changes without applying)
 export DRY_RUN=true
-python atlas_security_auditor.py
+python3 atlas_security_auditor.py
 
-# Apply fixes automatically
+# Apply fixes automatically (dry-run is the default unless explicitly disabled)
 export DRY_RUN=false
-python atlas_security_auditor.py
+python3 atlas_security_auditor.py
 ```
 
 **Configuration:**
@@ -144,11 +144,11 @@ Audit all projects in an organization:
 ```bash
 # Discover all projects and audit each one
 export ATLAS_ORG_ID=your_org_id_here
-python atlas_organization_security_audit.py
+python3 atlas_organization_security_audit.py
 
 # Dry-run mode
 export DRY_RUN=true
-python atlas_organization_security_audit.py
+python3 atlas_organization_security_audit.py
 ```
 
 **Configuration:**
@@ -165,7 +165,7 @@ DRY_RUN=true
 Analyze IP whitelisting across all projects:
 
 ```bash
-python atlas_ip_access_analyzer.py
+python3 atlas_ip_access_analyzer.py
 ```
 
 **Configuration:**
@@ -175,18 +175,18 @@ ATLAS_PUBLIC_KEY=your_public_key_here
 ATLAS_PRIVATE_KEY=your_private_key_here
 ```
 
-### Method 1: Command Line Arguments (IP Access Analyzer)
+### Method 1: Environment Variables (Recommended)
 
 ```bash
-python atlas_ip_access_analyzer.py <ORG_ID> <API_PUBLIC_KEY> <API_PRIVATE_KEY>
+export ATLAS_ORG_ID=your_org_id_here
+export ATLAS_PUBLIC_KEY=your_public_key_here
+export ATLAS_PRIVATE_KEY=your_private_key_here
+python3 atlas_ip_access_analyzer.py
 ```
 
-Example:
-```bash
-python atlas_ip_access_analyzer.py 5f1a2b3c4d5e6f7g8h9i0j1k your_public_key_here your_private_key_here
-```
+Avoid passing private API keys as command-line arguments because they can be exposed through shell history and process listings.
 
-### Method 2: Environment Variables (Recommended)
+### Method 2: `.env` File
 
 #### Using a `.env` file
 
@@ -197,14 +197,14 @@ ATLAS_PRIVATE_KEY=your_private_key_here
 ATLAS_PROJECT_ID=your_project_id_here
 ATLAS_ORG_ID=your_org_id_here
 ALERT_EMAIL=security@example.com
-DRY_RUN=false
+DRY_RUN=true
 ```
 
 2. Run the scripts (they will automatically load the `.env` file):
 ```bash
-python atlas_security_auditor.py
-python atlas_organization_security_audit.py
-python atlas_ip_access_analyzer.py
+python3 atlas_security_auditor.py
+python3 atlas_organization_security_audit.py
+python3 atlas_ip_access_analyzer.py
 ```
 
 **Note:** The scripts use `python-dotenv` to automatically load environment variables from the `.env` file. Make sure `.env` is in your `.gitignore` to avoid committing credentials.
@@ -219,11 +219,11 @@ export ATLAS_PRIVATE_KEY="your_private_key_here"
 export ATLAS_PROJECT_ID="your_project_id_here"
 export ATLAS_ORG_ID="your_org_id_here"
 export ALERT_EMAIL="security@example.com"
-export DRY_RUN="false"
+export DRY_RUN="true"
 
-python atlas_security_auditor.py
-python atlas_organization_security_audit.py
-python atlas_ip_access_analyzer.py
+python3 atlas_security_auditor.py
+python3 atlas_organization_security_audit.py
+python3 atlas_ip_access_analyzer.py
 ```
 
 ## Security Checks Reference
@@ -445,11 +445,12 @@ Document current IP access lists before reconfiguring network access.
   - Edit the key and change permissions
 
 ### Empty IP Access List
-- An empty list means no IP restrictions are configured
-- All IPs can access that project (equivalent to `0.0.0.0/0`)
-- This is a security risk and should be addressed
+- An empty Atlas project access list means no client IP entries are configured
+- This is not equivalent to `0.0.0.0/0`; open internet access is represented by an explicit `0.0.0.0/0` or `0.0.0.0` entry
+- Verify expected client, app server, VPN, or private endpoint access before assuming the project is reachable
 
 ### Script Hangs or Times Out
+- Scripts use 30-second HTTP request timeouts and retry transient Atlas/API errors
 - **Check your internet connection**
 - **Verify Atlas API is accessible**
   - Some corporate networks block Atlas API endpoints
